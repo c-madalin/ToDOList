@@ -3,16 +3,16 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Text.Json;
+using System.Windows;
 using System.Windows.Input;
 using ToDo.Models;
-using ToDo.utils;
+using ToDo.Utils;
 
 namespace ToDo.ViewModels
 {
-    class ToDoViewModel : INotifyPropertyChanged
+    public class ToDoViewModel : INotifyPropertyChanged
     {
-        private string FilePath = "res\\todo.json";
-
+        private readonly string _filePath = "res\\todo.json";
         public ObservableCollection<ToDoItem> ToDoItems { get; set; } = new();
 
         private string _newItemTitle;
@@ -23,18 +23,37 @@ namespace ToDo.ViewModels
             {
                 _newItemTitle = value;
                 OnPropertyChanged(nameof(NewItemTitle));
+                CommandManager.InvalidateRequerySuggested(); // Refresh command states
             }
         }
 
-        public ICommand AddCommand { get; set; }
-        public ICommand LoadCommand { get; set; }
-        public ICommand SaveCommand { get; set; }
+        private string _newItemDescription;
+        public string NewItemDescription
+        {
+            get => _newItemDescription;
+            set
+            {
+                _newItemDescription = value;
+                OnPropertyChanged(nameof(NewItemDescription));
+            }
+        }
+
+        public ICommand AddCommand { get; }
+        public ICommand RemoveCommand { get; }
+        public ICommand LoadCommand { get; }
+        public ICommand SaveCommand { get; }
+        public ICommand ClearAllCommand { get; }
 
         public ToDoViewModel()
         {
             AddCommand = new RelayCommand(_ => AddNewItem(), _ => !string.IsNullOrWhiteSpace(NewItemTitle));
+            RemoveCommand = new RelayCommand(param => RemoveItem(param as ToDoItem));
             LoadCommand = new RelayCommand(_ => LoadItems());
             SaveCommand = new RelayCommand(_ => SaveItems());
+            ClearAllCommand = new RelayCommand(_ => ClearAllItems(), _ => ToDoItems.Count > 0);
+
+            // Try to load items when application starts
+            LoadItems();
         }
 
         private void AddNewItem()
@@ -42,28 +61,60 @@ namespace ToDo.ViewModels
             ToDoItems.Add(new ToDoItem
             {
                 Title = NewItemTitle,
-                Description = "Description", // Poți lega și un câmp Description din UI, dacă vrei
-                IsDone = false
+                Description = NewItemDescription ?? string.Empty,
+                IsDone = false,
+                CreatedAt = DateTime.Now
             });
+
             NewItemTitle = string.Empty;
-            SaveToFile(); // Salvează automat după adăugare
+            NewItemDescription = string.Empty;
+            
+            SaveToFile(); // Auto-save
+        }
+
+        private void RemoveItem(ToDoItem item)
+        {
+            if (item != null)
+            {
+                ToDoItems.Remove(item);
+                SaveToFile(); // Auto-save
+            }
+        }
+
+        private void ClearAllItems()
+        {
+            // Ask for confirmation
+            if (MessageBox.Show("Sigur doriți să ștergeți toate task-urile?", 
+                                "Confirmare", 
+                                MessageBoxButton.YesNo, 
+                                MessageBoxImage.Question) == MessageBoxResult.Yes)
+            {
+                ToDoItems.Clear();
+                SaveToFile(); // Auto-save
+            }
         }
 
         private void SaveItems() => SaveToFile();
+
         private void LoadItems() => LoadFromFile();
 
         private void SaveToFile()
         {
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(FilePath)); // creează folderul dacă nu există
-                var json = JsonSerializer.Serialize(ToDoItems, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(FilePath, json);
+                Directory.CreateDirectory(Path.GetDirectoryName(_filePath)); // Create directory if it doesn't exist
+                var options = new JsonSerializerOptions 
+                { 
+                    WriteIndented = true,
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                };
+                
+                var json = JsonSerializer.Serialize(ToDoItems, options);
+                File.WriteAllText(_filePath, json);
             }
             catch (Exception ex)
             {
-                // Poți loga sau arăta un mesaj de eroare
-                Console.WriteLine("Eroare la salvare: " + ex.Message);
+                MessageBox.Show($"Eroare la salvare: {ex.Message}", "Eroare", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -71,22 +122,32 @@ namespace ToDo.ViewModels
         {
             try
             {
-                if (File.Exists(FilePath))
+                if (File.Exists(_filePath))
                 {
-                    var json = File.ReadAllText(FilePath);
-                    var items = JsonSerializer.Deserialize<ObservableCollection<ToDoItem>>(json);
-                    ToDoItems.Clear();
-                    foreach (var item in items)
-                        ToDoItems.Add(item);
+                    var json = File.ReadAllText(_filePath);
+                    var options = new JsonSerializerOptions 
+                    { 
+                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                    };
+
+                    var items = JsonSerializer.Deserialize<ObservableCollection<ToDoItem>>(json, options);
+                    
+                    if (items != null)
+                    {
+                        ToDoItems.Clear();
+                        foreach (var item in items)
+                            ToDoItems.Add(item);
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Eroare la încărcare: " + ex.Message);
+                MessageBox.Show($"Eroare la încărcare: {ex.Message}", "Eroare", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
-        public event PropertyChangedEventHandler? PropertyChanged;
+        public event PropertyChangedEventHandler PropertyChanged;
+
         protected void OnPropertyChanged(string name) =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
